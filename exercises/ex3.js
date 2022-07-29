@@ -23,20 +23,27 @@ const BASE_PATH = path.resolve(process.env.BASE_PATH || __dirname);
 // File to store output instead of sending to stdout
 let OUTFILE = path.join(BASE_PATH, 'files', 'out.txt');
 
+// Convert the "processFile" function into a cancelable async function
+processFile = CAF(processFile);
+
 // Argument handling
 if (args.help) {
   printHelp();
 } else if (args.in || args._.includes('-')) {
   // stdin is already a readable stream
+  // Create a cancelation token (mimics if there was a need to cancel an in-process async function)
+  const tooLong = CAF.timeout(3, 'Took too long!');
   // Process the stdin stream asynchronously
-  processFile(process.stdin)
+  processFile(tooLong, process.stdin)
     .then(() => console.log('Complete!'))
     .catch(errorHandler);
 } else if (args.file) {
   // Create a readable stream from the file
   const stream = fs.createReadStream(path.join(BASE_PATH, args.file));
+  // Create a cancelation token (mimics if there was a need to cancel an in-process async function)
+  const tooLong = CAF.timeout(3, 'Took too long!');
   // Process the file stream asynchronously
-  processFile(stream)
+  processFile(tooLong, stream)
     .then(() => console.log('Complete!'))
     .catch(errorHandler);
 } else {
@@ -47,7 +54,7 @@ if (args.help) {
               UTILITY FUNCTIONS
 ============================================= */
 //? PROCESS FILE - USING STREAMS
-async function processFile(inStream) {
+function* processFile(signal, inStream) {
   // Put our input stream into a variable for further processing
   let outStream = inStream;
 
@@ -94,8 +101,14 @@ async function processFile(inStream) {
 
   outStream.pipe(targetStream);
 
+  // Stop stream processing when signal is received
+  signal.pr.catch(() => {
+    outStream.unpipe(targetStream);
+    outStream.destroy();
+  });
+
   // Fire stream "end" event when done
-  await streamComplete(outStream);
+  yield streamComplete(outStream);
 }
 
 //? Announce when streaming is complete
